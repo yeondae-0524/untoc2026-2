@@ -1,5 +1,8 @@
 # AgentFence — A팀/B팀 통합 MVP
 
+B-2 개요서에 맞춘 정책 엔진 사용법과 새 정책 형식은 [B-2 정책 안내](docs/B2_POLICY.md)를 참고하세요.
+현재 `config/policy.json`은 파일·디렉터리 권한을 분리하며 파일 생성은 부모 디렉터리의 `create` 권한으로 판단합니다.
+
 Python 직접 구현 · Gemini API 우선 · JSON Allowlist · 함수형 게이트웨이 · Sandbox 제외.
 Python 3.11 이상, 표준 라이브러리만 사용합니다. API 키 없이 파일 Tool과 테스트를 실행할 수 있습니다.
 

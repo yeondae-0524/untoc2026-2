@@ -1,12 +1,12 @@
 {
-  "version": "1.0",
-  "allow": [
-    {"tool": "read_file", "path": "public.txt"},
-    {"tool": "write_file", "path": "notes.txt"},
-    {"tool": "list_files", "path": "."},
-    {"tool": "list_files", "path": "drafts"},
-    {"tool": "read_file", "path": "drafts/new.txt"},
-    {"tool": "create_file", "path": "drafts/new.txt"},
-    {"tool": "delete_file", "path": "drafts/new.txt"}
-  ]
+  "default": "BLOCK",
+  "files": {
+    "public.txt": ["read"],
+    "notes.txt": ["read", "write"],
+    "drafts/old.txt": ["read", "write", "delete"]
+  },
+  "directories": {
+    ".": ["list"],
+    "drafts": ["list", "create"]
+  }
 }
