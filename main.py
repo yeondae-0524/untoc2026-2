@@ -42,7 +42,7 @@ def main():
             return 1
         try:
             request = json.loads(line, object_pairs_hook=unique_object)
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, RecursionError):
             request = None
         print(json.dumps(gateway(request), ensure_ascii=False))
     return 0

@@ -33,7 +33,7 @@ class Policy:
                     raise ValueError("Duplicate rule")
                 grants.add((tool, path_value))
             return cls(frozenset(grants))
-        except (OSError, ValueError, TypeError, UnicodeError, FenceError):
+        except (OSError, ValueError, TypeError, UnicodeError, RecursionError, FenceError):
             raise FenceError("POLICY_ERROR", "Policy is missing or invalid; all calls are blocked.") from None
 
     def allows(self, tool, path):

@@ -167,6 +167,10 @@ class SecurityTests(unittest.TestCase):
         path.write_text(self.policy_path.read_text())
         self.assert_block(build_gateway(workspace=self.root, policy_path=path)(self.request()), "CONFIG_ERROR")
 
+    def test_excessive_json_depth_policy_is_blocked(self):
+        self.policy_path.write_text("[" * 2000 + "0" + "]" * 2000)
+        self.assert_block(build_gateway(workspace=self.root, policy_path=self.policy_path)(self.request()), "POLICY_ERROR")
+
     def test_hardlinks_block_all_existing_file_operations_and_listing(self):
         (self.root / "public.txt").unlink()
         os.link(self.secret, self.root / "public.txt")

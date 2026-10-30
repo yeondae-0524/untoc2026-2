@@ -71,6 +71,13 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(responses[1]["decision"], "BLOCK")
         self.assertEqual(responses[1]["reason_code"], "INVALID_REQUEST")
 
+    def test_cli_excessive_json_depth_is_blocked(self):
+        root = Path(__file__).resolve().parents[1]
+        nested = "[" * 2000 + "0" + "]" * 2000
+        result = subprocess.run([sys.executable, str(root / "main.py")], input=(nested + "\n").encode(),
+                                capture_output=True, cwd=root, check=True)
+        self.assertEqual(json.loads(result.stdout)["decision"], "BLOCK")
+
 
 if __name__ == "__main__":
     unittest.main()
