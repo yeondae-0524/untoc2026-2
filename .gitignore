@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+workspace/*
+!workspace/public.txt
+!workspace/notes.txt
+!workspace/drafts/
+workspace/drafts/*
+!workspace/drafts/.gitkeep
