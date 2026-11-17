@@ -1,3 +1,4 @@
+
 # agent/models/gemini.py
 
 import json
@@ -6,9 +7,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from __future__ import annotations
-
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from agent.agent import ToolCall, Turn
 
 
 # 프로젝트에서 사용하는 5가지 도구 명세
@@ -213,15 +214,6 @@ class Gemini:
     ) -> Turn:
         """Gemini 응답에서 텍스트와 모든 도구 호출을 추출한다."""
 
-    def _parse_response(
-        self,
-        response: Dict[str, Any]
-    ) -> Turn:
-
-    from agent.agent import ToolCall, Turn
-
-
-        
         candidates = response.get("candidates")
 
         if not candidates:
