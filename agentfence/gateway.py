@@ -1,18 +1,17 @@
 """The only callable injected into the Agent. Approval never leaves this module."""
-import logging
 from pathlib import Path
 from threading import Lock
 
+from agentfence.audit import record
 from agentfence.contracts import FenceError, VERSION, _ID, validate_request
 from agentfence.policy import Policy
 from tools.file_tools import _make_dispatch
 
-_LOG = logging.getLogger("agentfence.audit")
-
-
 def build_gateway(*, workspace, policy_path):
     """Return handle(request: dict) -> response: dict. Configuration is trusted."""
     startup_error = None
+    policy = None
+    dispatch = None
     try:
         workspace = Path(workspace).absolute()
         policy_path = Path(policy_path).absolute()
@@ -39,6 +38,8 @@ def build_gateway(*, workspace, policy_path):
                 tool, arguments = validate_request(request)
                 if startup_error:
                     raise startup_error
+                if policy is None or dispatch is None:
+                    raise FenceError("CONFIG_ERROR", "Workspace configuration is unavailable.")
                 if not policy.allows(tool, arguments["path"]):
                     raise FenceError("NOT_ALLOWED", "No matching allowlist grant.")
                 # The closure owns the executor. Agent never receives it or an ALLOW token.
@@ -60,8 +61,7 @@ def build_gateway(*, workspace, policy_path):
                 decision, code, reason, execution = "BLOCK", "INTERNAL_ERROR", "Request could not be processed.", None
             response = {"version": VERSION, "request_id": request_id, "decision": decision,
                         "reason_code": code, "reason": reason, "execution": execution}
-            # No paths, content, prompts, keys, or raw exception strings in audit logs.
-            _LOG.info("request_id=%s decision=%s reason_code=%s", request_id, decision, code)
+            record(request, response)
             return response
 
     return handle

@@ -35,7 +35,8 @@ python -m unittest discover -s tests -v
 ```
 
 차단 확인: 위 요청의 경로를 `../config/policy.json`으로 바꿉니다. `BLOCK`, `INVALID_PATH`, `execution: null`이 반환됩니다.
-`--audit` 옵션은 요청 ID·판정·사유 코드만 표준 오류에 기록합니다.
+`--audit` 옵션은 UTC 시각·결과·Tool·요청 ID를 표준 오류에 기록합니다.
+거절과 오류에는 사유 코드도 기록하며, 경로와 파일 내용은 기록하지 않습니다.
 
 ## Gemini 연결
 

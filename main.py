@@ -1,11 +1,11 @@
 """Local JSON CLI and opt-in Gemini mode. Run from the repository root."""
 import argparse
 import json
-import logging
 import os
 import sys
 from pathlib import Path
 
+from agentfence.audit import configure_stderr
 from agentfence.contracts import unique_object
 from agentfence.gateway import build_gateway
 
@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--gemini", metavar="PROMPT", help="Send prompt and approved tool results to Gemini")
     args = parser.parse_args()
     if args.audit:
-        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+        configure_stderr()
     gateway = build_gateway(workspace=args.workspace, policy_path=args.policy)
     if args.gemini is not None:
         from agent.agent import run_agent

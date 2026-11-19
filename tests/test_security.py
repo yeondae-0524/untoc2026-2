@@ -314,10 +314,22 @@ class SecurityTests(unittest.TestCase):
     def test_audit_log_omits_paths_content_and_exception_details(self):
         with self.assertLogs("agentfence.audit", level="INFO") as captured:
             self.call("write_file", "notes.txt", content="DO_NOT_LOG_THIS")
+            self.call("read_file", "private.txt")
+            self.handle({**self.request(), "tool": "bad\nFORGED EVENT"})
+            self.call("create_file", "docs/new.txt", content="created")
+            self.call("create_file", "docs/new.txt", content="created")
+            build_gateway(workspace=self.root, policy_path=self.base / "missing.json")(self.request())
         audit = "\n".join(captured.output)
-        self.assertIn("request_id=test-1 decision=ALLOW reason_code=OK", audit)
+        self.assertIn("[ACCEPTED] write_file request_id=test-1", audit)
+        self.assertIn("[REJECTED] read_file request_id=test-1 reason_code=NOT_ALLOWED", audit)
+        self.assertIn("[REJECTED] <unknown> request_id=test-1 reason_code=UNKNOWN_TOOL", audit)
+        self.assertIn("[ERROR] create_file request_id=test-1 reason_code=ALREADY_EXISTS", audit)
+        self.assertIn("[ERROR] read_file request_id=test-1 reason_code=POLICY_ERROR", audit)
+        self.assertRegex(audit, r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
         self.assertNotIn("notes.txt", audit)
+        self.assertNotIn("private.txt", audit)
         self.assertNotIn("DO_NOT_LOG_THIS", audit)
+        self.assertNotIn("FORGED EVENT", audit)
         self.assertNotIn(str(self.root), audit)
 
 
