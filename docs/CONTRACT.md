@@ -35,9 +35,9 @@ Python API 호출자는 JSON 파싱을 담당하며 파싱 시 중복 키를 거
 | tool | arguments | 성공 result |
 |---|---|---|
 | `read_file` | `path: str` | `{path, content, bytes}` |
-| `write_file` | `path: str, content: str` | `{path, bytes}` |
+| `write_file` | `path: str, content: str` | `{path, bytes_written}` |
 | `list_files` | `path: str` | `{path, entries: [{path, type}]}` |
-| `create_file` | `path: str, content: str` | `{path, bytes}` |
+| `create_file` | `path: str, content: str` | `{path, bytes_written}` |
 | `delete_file` | `path: str` | `{path, deleted: true}` |
 
 UTF-8 텍스트만 지원하며 읽기 및 쓰기 내용의 한도는 각각 65,536바이트입니다.
@@ -54,7 +54,7 @@ UTF-8 텍스트만 지원하며 읽기 및 쓰기 내용의 한도는 각각 65,
 {
   "version": "1.0", "request_id": "req-001", "decision": "ALLOW",
   "reason_code": "OK", "reason": "Approved and executed.",
-  "execution": {"status": "SUCCESS", "result": {"path": "notes.txt", "bytes": 10}}
+  "execution": {"status": "SUCCESS", "result": {"path": "notes.txt", "bytes_written": 10}}
 }
 ```
 
