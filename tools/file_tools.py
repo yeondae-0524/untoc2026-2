@@ -60,7 +60,7 @@ def _write(call, args, mode):
                 raise OSError("Short write")
             offset += written
         os.fsync(fd)
-    return {"path": args["path"], "bytes": len(data)}
+    return {"path": args["path"], "bytes_written": len(data)}
 
 
 def write_file(call):
