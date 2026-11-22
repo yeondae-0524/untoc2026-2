@@ -109,6 +109,98 @@ class PolicyTests(unittest.TestCase):
         self.load({"default": "BLOCK", "files": {}, "directories": {}})
         self.assertTrue(policy.allows("read_file", "public.txt"))
 
+    def test_constructor_detaches_mutable_grant_collections(self):
+        grants = {("read_file", "public.txt"), ("list_files", ".")}
+        directories = {"drafts"}
+        policy = Policy(grants, directories)
+        grants.clear()
+        grants.add(("delete_file", "public.txt"))
+        directories.add(".")
+        directories.remove("drafts")
+        self.assertTrue(policy.allows("read_file", "public.txt"))
+        self.assertFalse(policy.allows("delete_file", "public.txt"))
+        self.assertTrue(policy.allows("create_file", "drafts/new.txt"))
+        self.assertFalse(policy.allows("create_file", "new.txt"))
+        self.assertIsInstance(policy.grants, frozenset)
+        self.assertIsInstance(policy.create_directories, frozenset)
+
+    def test_listing_requires_valid_explicit_directory_permission(self):
+        self.data["files"]["private/known.txt"] = ["read"]
+        policy = self.load()
+        for directory in [None, [], {}, "", "private", "../drafts", "/drafts",
+                          "C:/drafts", "drafts\\sub", "policy.json"]:
+            with self.subTest(directory=directory):
+                self.assertEqual(policy.visible_children(directory), [])
+        self.assertTrue(policy.allows("read_file", "private/known.txt"))
+        self.assertEqual(policy.visible_children("drafts"), ["old.txt"])
+
+    def test_permission_policy_executes_only_explicit_operations(self):
+        self.load()
+        root = Path(self.temp.name) / "workspace"
+        (root / "drafts").mkdir(parents=True)
+        (root / "public.txt").write_text("public", encoding="utf-8")
+        (root / "notes.txt").write_text("before", encoding="utf-8")
+        (root / "drafts/old.txt").write_text("old", encoding="utf-8")
+        handle = build_gateway(workspace=root, policy_path=self.path)
+
+        def call(tool, path, **extra):
+            return handle({"version": "1.0", "request_id": "b2-integration",
+                           "tool": tool, "arguments": {"path": path, **extra}})
+
+        for tool, path, extra in [
+            ("read_file", "public.txt", {}),
+            ("write_file", "notes.txt", {"content": "새 메모"}),
+            ("list_files", ".", {}),
+            ("create_file", "drafts/new.txt", {"content": "새 파일"}),
+            ("delete_file", "drafts/old.txt", {}),
+        ]:
+            with self.subTest(tool=tool):
+                response = call(tool, path, **extra)
+                self.assertEqual(response["decision"], "ALLOW", response)
+                self.assertEqual(response["execution"]["status"], "SUCCESS", response)
+        self.assertEqual((root / "notes.txt").read_text(encoding="utf-8"), "새 메모")
+        self.assertEqual((root / "drafts/new.txt").read_text(encoding="utf-8"), "새 파일")
+        self.assertFalse((root / "drafts/old.txt").exists())
+
+        # A creation grant does not grant access to the newly created file.
+        for tool, path, extra in [
+            ("read_file", "drafts/new.txt", {}),
+            ("write_file", "drafts/new.txt", {"content": "overwrite"}),
+            ("delete_file", "drafts/new.txt", {}),
+            ("create_file", "other.txt", {"content": "unauthorized"}),
+            ("list_files", "drafts/sub", {}),
+        ]:
+            with self.subTest(blocked_tool=tool):
+                response = call(tool, path, **extra)
+                self.assertEqual(response["decision"], "BLOCK", response)
+                self.assertEqual(response["reason_code"], "NOT_ALLOWED", response)
+                self.assertIsNone(response["execution"])
+        self.assertEqual((root / "drafts/new.txt").read_text(encoding="utf-8"), "새 파일")
+        self.assertFalse((root / "other.txt").exists())
+
+    def test_denied_and_broken_policies_never_dispatch_any_tool(self):
+        root = Path(self.temp.name) / "workspace"
+        root.mkdir()
+        spy = Mock()
+        for raw, expected_code in [
+            (json.dumps({"default": "BLOCK", "files": {}, "directories": {}}), "NOT_ALLOWED"),
+            ("{", "POLICY_ERROR"),
+        ]:
+            self.path.write_text(raw, encoding="utf-8")
+            with patch("agentfence.gateway._make_dispatch", return_value=spy):
+                handle = build_gateway(workspace=root, policy_path=self.path)
+            for tool in ["read_file", "write_file", "list_files", "create_file", "delete_file"]:
+                arguments = {"path": "public.txt"}
+                if tool in {"write_file", "create_file"}:
+                    arguments["content"] = "must not execute"
+                with self.subTest(policy=expected_code, tool=tool):
+                    response = handle({"version": "1.0", "request_id": "b2-denied",
+                                       "tool": tool, "arguments": arguments})
+                    self.assertEqual(response["reason_code"], expected_code)
+                    self.assertEqual(response["decision"], "BLOCK")
+                    self.assertIsNone(response["execution"])
+                    spy.assert_not_called()
+
     def test_gateway_uses_new_policy_and_does_not_dispatch_blocked_calls(self):
         self.load()
         root = Path(self.temp.name) / "workspace"
