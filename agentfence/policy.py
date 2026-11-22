@@ -48,6 +48,11 @@ class Policy:
     grants: frozenset
     create_directories: frozenset = frozenset()
 
+    def __post_init__(self):
+        # frozen=True alone does not detach caller-owned mutable sets.
+        object.__setattr__(self, "grants", frozenset(self.grants))
+        object.__setattr__(self, "create_directories", frozenset(self.create_directories))
+
     @classmethod
     def load(cls, path):
         try:
@@ -103,6 +108,9 @@ class Policy:
         return PolicyDecision("BLOCK", "POLICY_DENIED", "해당 작업을 허용하는 규칙이 없습니다.")
 
     def visible_children(self, directory):
+        # Enumeration must not reveal names without a valid list grant.
+        if not self.allows("list_files", directory):
+            return []
         # Only read/list grants reveal names. Mutation grants do not reveal contents.
         prefix = "" if directory == "." else directory + "/"
         return sorted({path[len(prefix):] for tool, path in self.grants
