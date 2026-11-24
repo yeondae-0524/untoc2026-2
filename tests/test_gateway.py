@@ -84,7 +84,10 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.target.read_text(encoding="utf-8"), "after")
         self.assertEqual(response["decision"], "ALLOW")
         self.assertEqual(response["reason_code"], "INTERNAL_ERROR")
-        self.assertEqual(response["execution"], {"status": "ERROR", "result": None})
+        self.assertEqual(response["execution"], {
+            "status": "FAILED", "result": None,
+            "error": {"code": "INTERNAL_ERROR", "message": "Approved operation failed."},
+        })
         self.assertNotIn("PRIVATE_DETAILS", json.dumps(response))
         dispatch.assert_called_once()
 

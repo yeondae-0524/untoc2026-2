@@ -3,7 +3,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from agent.agent import ToolCall, Turn, run_agent
 from agent.models.gemini import Gemini, tool_declarations
@@ -45,6 +45,34 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("fake-key", json.dumps(payloads))
         self.assertEqual(len(tool_declarations()), 5)
 
+    def test_official_sdk_preserves_signatures_and_disables_automatic_execution(self):
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            self.skipTest("Google Gen AI SDK unavailable")
+        first = types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(
+            role="model", parts=[types.Part(
+                thought_signature=b"\xff\x00",
+                function_call=types.FunctionCall(name="read_file", args={"path": "public.txt"}, id="call-1"),
+            )],
+        ))])
+        final = types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(
+            role="model", parts=[types.Part(text="done")],
+        ))])
+        with patch.object(genai, "Client") as client:
+            generate = client.return_value.models.generate_content
+            generate.side_effect = [first, final]
+            with Gemini(api_key="fake", model="test") as model:
+                gateway = Mock(return_value={"decision": "ALLOW"})
+                self.assertEqual(run_agent("test", model=model, gateway=gateway), "done")
+            first_request, second_request = [call.kwargs for call in generate.call_args_list]
+            self.assertTrue(first_request["config"].automatic_function_calling.disable)
+            self.assertEqual(second_request["contents"][1].parts[0].thought_signature, b"\xff\x00")
+            self.assertEqual(second_request["contents"][2].parts[0].function_response.id, "call-1")
+            gateway.assert_called_once()
+            client.return_value.close.assert_called_once()
+
     def test_model_errors_do_not_expose_raw_response(self):
         model = Gemini(api_key="fake", model="test", transport=lambda _: {"promptFeedback": "blocked"})
         with self.assertRaisesRegex(RuntimeError, "invalid or blocked"):
@@ -52,12 +80,12 @@ class AgentTests(unittest.TestCase):
 
     def test_agent_call_budget(self):
         model = Mock()
-        turn = Turn("", (ToolCall("read_file", {"path": "public.txt"}),) * 17)
+        turn = Turn("", (ToolCall("read_file", {"path": "public.txt"}),) * 11)
         model.start.return_value = turn
         gateway = Mock(return_value={})
         with self.assertRaisesRegex(RuntimeError, "tool-call limit"):
             run_agent("test", model=model, gateway=gateway)
-        self.assertEqual(gateway.call_count, 16)
+        self.assertEqual(gateway.call_count, 10)
 
     def test_cli_offline_json_and_duplicate_member_block(self):
         root = Path(__file__).resolve().parents[1]

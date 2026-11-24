@@ -1,5 +1,6 @@
 """The only callable injected into the Agent. Approval never leaves this module."""
 import logging
+from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
@@ -58,14 +59,13 @@ def build_gateway(*, workspace, policy_path):
         except (OSError, UnicodeError) as exc:
             code, reason = "EXECUTION_ERROR", "Approved operation failed."
             if isinstance(exc, FileNotFoundError):
-                code, reason = "NOT_FOUND", "Approved target does not exist."
+                code, reason = "FILE_NOT_FOUND", "Approved target does not exist."
             elif isinstance(exc, FileExistsError):
                 code, reason = "ALREADY_EXISTS", "create_file cannot overwrite a target."
-            return _response(request_id, "ALLOW", code, reason, {"status": "ERROR", "result": None})
+            return _failed(request_id, code, reason)
         except Exception:
             # Execution may already have changed a file; never claim it was not run.
-            return _response(request_id, "ALLOW", "INTERNAL_ERROR", "Approved operation failed.",
-                             {"status": "ERROR", "result": None})
+            return _failed(request_id, "INTERNAL_ERROR", "Approved operation failed.")
         return _response(request_id, "ALLOW", "OK", "Approved and executed.",
                          {"status": "SUCCESS", "result": result})
 
@@ -92,3 +92,23 @@ def build_gateway(*, workspace, policy_path):
 def _response(request_id, decision, code, reason, execution=None):
     return {"version": VERSION, "request_id": request_id, "decision": decision,
             "reason_code": code, "reason": reason, "execution": execution}
+
+
+def _failed(request_id, code, reason):
+    return _response(request_id, "ALLOW", code, reason, {
+        "status": "FAILED", "result": None, "error": {"code": code, "message": reason},
+    })
+
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+@lru_cache(maxsize=1)
+def _default_gateway():
+    return build_gateway(workspace=_ROOT / "workspace",
+                         policy_path=_ROOT / "config" / "policy.json")
+
+
+def handle_tool_call(request: dict) -> dict:
+    """Execute a v1 request using the repository workspace and allowlist."""
+    return _default_gateway()(request)
