@@ -75,14 +75,15 @@ UTF-8 텍스트만 지원하며 읽기 및 쓰기 내용의 한도는 각각 65,
 ```json
 {
   "version": "1.0", "request_id": "req-003", "decision": "ALLOW",
-  "reason_code": "NOT_FOUND", "reason": "Approved target does not exist.",
-  "execution": {"status": "ERROR", "result": null}
+  "reason_code": "FILE_NOT_FOUND", "reason": "Approved target does not exist.",
+  "execution": {"status": "FAILED", "result": null,
+                "error": {"code": "FILE_NOT_FOUND", "message": "Approved target does not exist."}}
 }
 ```
 
 `decision`은 권한/안전성 판정, `execution.status`는 실제 실행 결과입니다.
 안전성 검사가 실패한 요청은 변경 전에 `BLOCK`으로 종료합니다.
-OS 오류, 잘못된 UTF-8 파일, 쓰기 실패 등은 `ALLOW` + `ERROR`입니다.
+OS 오류, 잘못된 UTF-8 파일, 쓰기 실패 등은 `ALLOW` + `FAILED`입니다.
 쓰기 오류에는 부분 변경이 남을 수 있으므로 자동 재시도하지 않습니다. 이 MVP는 트랜잭션/원자적 쓰기를 제공하지 않습니다.
 잘못된/누락된 요청 ID는 응답에서 `null`입니다. `reason`은 사람이 읽는 설명이며 분기는 `reason_code`로 합니다.
 
@@ -100,7 +101,7 @@ OS 오류, 잘못된 UTF-8 파일, 쓰기 실패 등은 `ALLOW` + `ERROR`입니�
 | `UNSUPPORTED_PLATFORM` | 안전한 파일 접근 미지원 |
 | `UNSAFE_TARGET` | 링크/특수 파일/하드링크/루트 교체 |
 | `SIZE_LIMIT` | 읽기/쓰기 크기 초과 |
-| `NOT_FOUND` | 허용된 대상/상위 폴더 없음 |
+| `FILE_NOT_FOUND` | 허용된 대상/상위 폴더 없음 |
 | `ALREADY_EXISTS` | 생성 대상 이미 존재 |
 | `EXECUTION_ERROR` | 승인 후 OS/텍스트 처리 오류 |
 | `INTERNAL_ERROR` | 예상하지 못한 내부 오류 |
@@ -151,8 +152,8 @@ Python의 비공개 이름은 OS 권한 경계가 아닙니다. 같은 프로세
 
 `Model.start(prompt) -> Turn`, `Model.resume([(ToolCall, gateway_response), ...]) -> Turn`을 구현합니다.
 `ToolCall(name, arguments, call_id)`와 `Turn(text, calls)`는 제공자와 독립적인 자료형입니다.
-Gemini는 REST `generateContent`를 사용하고 함수 선언만 등록합니다. 자동 함수 실행/코드 실행은 사용하지 않습니다.
+Gemini는 공식 `google-genai` SDK를 사용하고 함수 선언만 등록합니다. 자동 함수 실행/코드 실행은 사용하지 않습니다.
 모든 제안 호출을 공통 JSON으로 바꿔 게이트웨이에 보내고 전체 `BLOCK/ALLOW` 응답을 모델에 돌려줍니다.
 병렬 제안도 순서대로 검증/실행합니다. 원본 모델 content, thought signature, 호출 ID를 보존합니다.
-한 실행에서 최대 8회 왕복/16개 Tool Call을 처리하며 자동 재시도하지 않습니다.
+한 실행에서 최대 10회 왕복/10개 Tool Call을 처리하며 자동 재시도하지 않습니다.
 GPT/Claude 어댑터는 위 `Model` 프로토콜에 맞춰 메시지와 호출 ID를 변환합니다.

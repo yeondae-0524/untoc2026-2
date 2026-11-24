@@ -4,7 +4,7 @@ B-2 개요서에 맞춘 정책 엔진 사용법과 새 정책 형식은 [B-2 정
 현재 `config/policy.json`은 파일·디렉터리 권한을 분리하며 파일 생성은 부모 디렉터리의 `create` 권한으로 판단합니다.
 
 Python 직접 구현 · Gemini API 우선 · JSON Allowlist · 함수형 게이트웨이 · Sandbox 제외.
-Python 3.11 이상, 표준 라이브러리만 사용합니다. API 키 없이 파일 Tool과 테스트를 실행할 수 있습니다.
+팀 개발 환경은 Python 3.14.x입니다. `python -m pip install -r requirements.txt`로 의존성을 설치합니다. API 키 없이 파일 Tool과 테스트를 실행할 수 있습니다.
 
 ```text
 A팀 Agent / Gemini → B팀 handle(request)
@@ -18,14 +18,14 @@ A팀 Agent / Gemini → B팀 handle(request)
 
 ```powershell
 '{"version":"1.0","request_id":"demo-1","tool":"read_file","arguments":{"path":"public.txt"}}' | python main.py
-python -m unittest discover -s tests -v
+python -m pytest -q
 ```
 
 Linux/macOS의 POSIX Python:
 
 ```sh
 printf '%s\n' '{"version":"1.0","request_id":"demo-1","tool":"read_file","arguments":{"path":"public.txt"}}' | python main.py
-python -m unittest discover -s tests -v
+python -m pytest -q
 ```
 
 정상 응답:
@@ -41,7 +41,9 @@ python -m unittest discover -s tests -v
 
 운영자가 `GEMINI_API_KEY`와 사용할 모델 ID `GEMINI_MODEL`을 환경변수로 설정합니다.
 예제 키, `.env` 파일, 실제 비밀정보를 저장소나 `workspace/`에 넣지 마세요.
-모델 ID는 계정에서 사용 가능한 값으로 지정하며 코드가 특정 모델에 고정되지 않습니다.
+모델 ID는 계정에서 사용 가능한 값으로 지정합니다. 미설정 시 `gemini-2.5-flash`를 사용합니다.
+
+터미널에서 `python main.py`를 실행하면 자연어를 한 줄씩 입력할 수 있습니다. `exit`로 종료합니다.
 
 ```powershell
 python main.py --gemini "public.txt를 읽고 내용을 요약해줘"
@@ -53,6 +55,8 @@ API 키를 읽는 역할은 Gemini 어댑터만 담당합니다. 키는 Tool 인
 오프라인 테스트는 가짜 전송을 사용하며 실제 Gemini API 호출과 과금은 하지 않습니다.
 
 ## 통합 인터페이스
+
+기본 환경에서는 `agentfence.gateway.handle_tool_call(request)`를 호출합니다. 별도 환경은 아래처럼 조립할 수 있습니다.
 
 ```python
 from agentfence.gateway import build_gateway
@@ -69,7 +73,7 @@ response = handle({
 
 - `read_file(path)`: UTF-8 읽기, 최대 65,536바이트.
 - `write_file(path, content)`: 기존 일반 파일의 전체 내용 교체. 새 파일 생성 안 함.
-- `list_files(path)`: 한 단계 목록. 루트는 `.`. 읽기/목록 권한이 있는 이름만 표시.
+- `list_files(path)`: 한 단계 목록. 루트는 `.`. 읽기/목록 권한이 있는 이름만 표시. 심볼릭 링크는 대상에 접근하지 않고 유형만 표시.
 - `create_file(path, content)`: 새 파일만 배타적으로 생성. 덮어쓰기/부모 폴더 자동 생성 안 함.
 - `delete_file(path)`: 일반 파일 하나 삭제. 폴더/재귀 삭제 안 함.
 

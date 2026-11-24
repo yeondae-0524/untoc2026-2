@@ -120,9 +120,10 @@ class SecurityTests(unittest.TestCase):
         self.handle = self.build(self.rules + [("create_file", "public.txt"), ("write_file", "missing.txt")])
         response = self.call("create_file", "public.txt", content="bad")
         self.assertEqual(response["reason_code"], "ALREADY_EXISTS")
-        self.assertEqual(response["execution"], {"status": "ERROR", "result": None})
+        self.assertEqual(response["execution"], {"status": "FAILED", "result": None,
+                                                "error": {"code": "ALREADY_EXISTS", "message": response["reason"]}})
         self.assertEqual((self.root / "public.txt").read_text(), "public")
-        self.assertEqual(self.call("write_file", "missing.txt", content="x")["reason_code"], "NOT_FOUND")
+        self.assertEqual(self.call("write_file", "missing.txt", content="x")["reason_code"], "FILE_NOT_FOUND")
         self.assertFalse((self.root / "missing.txt").exists())
 
     def test_directory_never_read_written_or_deleted_as_file(self):
@@ -133,9 +134,10 @@ class SecurityTests(unittest.TestCase):
 
     def test_missing_target_and_invalid_utf8_are_execution_errors(self):
         (self.root / "public.txt").unlink()
-        self.assertEqual(self.call()["reason_code"], "NOT_FOUND")
+        self.assertEqual(self.call()["reason_code"], "FILE_NOT_FOUND")
         (self.root / "public.txt").write_bytes(b"\xff")
-        self.assertEqual(self.call()["execution"], {"status": "ERROR", "result": None})
+        self.assertEqual(self.call()["execution"]["status"], "FAILED")
+        self.assertEqual(self.call()["execution"]["error"]["code"], "EXECUTION_ERROR")
 
     def test_size_limits_before_write_and_after_bounded_read(self):
         before = (self.root / "notes.txt").read_bytes()

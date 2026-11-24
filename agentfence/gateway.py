@@ -1,5 +1,6 @@
 """The only callable injected into the Agent. Approval never leaves this module."""
 import logging
+from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
@@ -50,11 +51,12 @@ def build_gateway(*, workspace, policy_path):
             except (OSError, UnicodeError) as exc:
                 # Policy allowed it, but execution failed. Never expose raw OS errors/paths.
                 decision, code, reason = "ALLOW", "EXECUTION_ERROR", "Approved operation failed."
-                execution = {"status": "ERROR", "result": None}
                 if isinstance(exc, FileNotFoundError):
-                    code, reason = "NOT_FOUND", "Approved target does not exist."
+                    code, reason = "FILE_NOT_FOUND", "Approved target does not exist."
                 elif isinstance(exc, FileExistsError):
                     code, reason = "ALREADY_EXISTS", "create_file cannot overwrite a target."
+                execution = {"status": "FAILED", "result": None,
+                             "error": {"code": code, "message": reason}}
             except Exception:
                 # Fail closed on implementation defects without exposing file data.
                 decision, code, reason, execution = "BLOCK", "INTERNAL_ERROR", "Request could not be processed.", None
@@ -65,3 +67,17 @@ def build_gateway(*, workspace, policy_path):
             return response
 
     return handle
+
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+@lru_cache(maxsize=1)
+def _default_gateway():
+    return build_gateway(workspace=_ROOT / "workspace",
+                         policy_path=_ROOT / "config" / "policy.json")
+
+
+def handle_tool_call(request: dict) -> dict:
+    """Execute a v1 request using the repository workspace and allowlist."""
+    return _default_gateway()(request)

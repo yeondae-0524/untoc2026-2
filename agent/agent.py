@@ -97,7 +97,7 @@ def run_agent(
     *,
     model: Model,
     gateway,
-    max_rounds: int = 8
+    max_rounds: int = 10
 ) -> str:
     """
     모델과 Gateway를 연결하여 Agent를 실행한다.
@@ -110,8 +110,8 @@ def run_agent(
     5. 최종 텍스트 응답 반환
 
     최대 실행 제한:
-    - 왕복 횟수: 8회
-    - 전체 Tool Call: 16회
+    - 왕복 횟수: 10회
+    - 전체 Tool Call: 10회
     """
 
     # 실행 인자 확인
@@ -124,9 +124,9 @@ def run_agent(
     if (
         not isinstance(max_rounds, int)
         or isinstance(max_rounds, bool)
-        or not 1 <= max_rounds <= 8
+        or not 1 <= max_rounds <= 10
     ):
-        raise ValueError("max_rounds must be between 1 and 8")
+        raise ValueError("max_rounds must be between 1 and 10")
 
     # 첫 번째 모델 응답
     turn = model.start(prompt)
@@ -148,7 +148,7 @@ def run_agent(
             total_tool_calls += 1
 
             # 전체 Tool Call 제한
-            if total_tool_calls > 16:
+            if total_tool_calls > 10:
                 raise RuntimeError(
                     "Agent tool-call limit reached"
                 )

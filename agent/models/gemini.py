@@ -1,11 +1,7 @@
 
 # agent/models/gemini.py
 
-import json
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -103,7 +99,7 @@ class Gemini:
     Gemini API 연동 클래스.
 
     transport를 전달하면 실제 API 대신 해당 함수를 사용한다.
-    transport를 전달하지 않으면 Gemini REST API를 호출한다.
+    transport를 전달하지 않으면 Google Gen AI SDK를 사용한다.
     """
 
     def __init__(
@@ -119,12 +115,21 @@ class Gemini:
                 "GEMINI_API_KEY 환경변수가 설정되지 않았습니다."
             )
 
-        self.model_name = model
+        self.model_name = model or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
         self.transport = transport
+        self._client = None
 
         self.conversation_history: List[Dict[str, Any]] = []
 
         self.declarations = tool_declarations()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
     def _send_request(
         self,
@@ -149,45 +154,28 @@ class Gemini:
                     "Gemini request failed"
                 ) from None
 
-        # 실제 Gemini REST API 호출
-        encoded_key = urllib.parse.urlencode({
-            "key": self.api_key
-        })
-
-        url = (
-            "https://generativelanguage.googleapis.com/"
-            f"v1beta/models/{self.model_name}:generateContent?"
-            f"{encoded_key}"
-        )
-
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json"
-            },
-            method="POST"
-        )
-
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=30
-            ) as result:
-                response_data = result.read()
+            from google import genai
+            from google.genai import types
 
-            response = json.loads(response_data)
-
-            if not isinstance(response, dict):
-                raise RuntimeError("invalid or blocked Gemini response")
-
-            return response
-
+            if self._client is None:
+                self._client = genai.Client(
+                    api_key=self.api_key, http_options=types.HttpOptions(timeout=30_000)
+                )
+            response = self._client.models.generate_content(
+                model=self.model_name,
+                contents=[types.Content.model_validate(item) for item in payload["contents"]],
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(function_declarations=self.declarations)],
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                    temperature=0.0,
+                ),
+            )
+            return response.model_dump(mode="python", by_alias=True, exclude_none=True)
+        except ImportError:
+            raise RuntimeError("Install the project requirements to use Gemini.") from None
         except Exception:
-            # API 키나 원본 응답이 오류 메시지에 노출되지 않도록 한다.
-            raise RuntimeError(
-                "Gemini request failed"
-            ) from None
+            raise RuntimeError("Gemini request failed") from None
 
     def _generate_content(
         self
@@ -253,7 +241,7 @@ class Gemini:
             if not isinstance(part, dict):
                 continue
 
-            function_call = part.get("functionCall")
+            function_call = part.get("functionCall") or part.get("function_call")
 
             if function_call:
                 tool_calls.append(
@@ -266,7 +254,7 @@ class Gemini:
 
             text = part.get("text")
 
-            if text:
+            if text and not part.get("thought"):
                 text_parts.append(text)
 
         # 응답에 도구 호출이 있으면 모든 호출을 반환한다.
