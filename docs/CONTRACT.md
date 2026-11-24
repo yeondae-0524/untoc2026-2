@@ -7,9 +7,11 @@
 ```python
 build_gateway(*, workspace: str | Path, policy_path: str | Path) -> Callable[[dict], dict]
 handle(request: dict) -> dict
+handle_tool_call(request: dict) -> dict
 ```
 
-B팀이 신뢰하는 설정으로 게이트웨이를 만들고 A팀 Agent에 `handle`만 전달합니다.
+기본 CLI는 저장소의 workspace와 정책을 사용하는 `handle_tool_call`을 호출합니다.
+별도 환경에서는 B팀이 신뢰하는 설정으로 게이트웨이를 만들고 A팀 Agent에 `handle`만 전달합니다.
 `workspace`와 `policy_path`는 Tool 요청에 포함하지 않습니다. Agent는 정책이나 실행 함수를 주입할 수 없습니다.
 게이트웨이는 정책 스냅샷과 workspace 식별자를 생성 시 고정합니다.
 정책 변경은 새 게이트웨이를 만들어 적용합니다. 실행 중 파일을 바꿔도 기존 정책에 반영되지 않습니다.
@@ -44,7 +46,7 @@ UTF-8 텍스트만 지원하며 읽기 및 쓰기 내용의 한도는 각각 65,
 `write_file`은 존재하는 일반 파일만 교체합니다. `create_file`은 존재하지 않는 파일만 만듭니다.
 `delete_file`은 일반 파일만 삭제합니다. 디렉터리는 운영자가 미리 생성합니다.
 `list_files`는 재귀 탐색하지 않고, 해당 디렉터리의 직접 자식 중 정확한 `read_file` 또는 `list_files` grant가 있는 항목만 반환합니다.
-수정/생성/삭제 권한만 있는 이름, 숨김 파일, 링크, 특수 파일은 목록에서 제외합니다. 경로 순으로 정렬합니다.
+수정/생성/삭제 권한만 있는 이름, 숨김 파일, 하드링크, 정션과 특수 파일은 목록에서 제외합니다. 목록에 표시할 권한이 있는 심볼릭 링크는 `symlink`로 표시하고 대상을 따라가지 않습니다. 경로 순으로 정렬합니다.
 
 ## 3. 응답 JSON
 
@@ -84,8 +86,11 @@ UTF-8 텍스트만 지원하며 읽기 및 쓰기 내용의 한도는 각각 65,
 `decision`은 권한/안전성 판정, `execution.status`는 실제 실행 결과입니다.
 안전성 검사가 실패한 요청은 변경 전에 `BLOCK`으로 종료합니다.
 OS 오류, 잘못된 UTF-8 파일, 쓰기 실패 등은 `ALLOW` + `FAILED`입니다.
+정책 검사 중 예외는 `BLOCK` 및 `POLICY_ERROR`로 반환합니다. 실행기에 진입한 뒤 예상 밖 예외가 발생하면 `ALLOW` 및 `FAILED`를 반환하고 `execution.error.code`는 `INTERNAL_ERROR`입니다.
 쓰기 오류에는 부분 변경이 남을 수 있으므로 자동 재시도하지 않습니다. 이 MVP는 트랜잭션/원자적 쓰기를 제공하지 않습니다.
 잘못된/누락된 요청 ID는 응답에서 `null`입니다. `reason`은 사람이 읽는 설명이며 분기는 `reason_code`로 합니다.
+
+로그 기록이 실패해도 이미 결정된 응답은 유지하고 파일 작업을 재실행하지 않습니다.
 
 | reason_code | 의미 |
 |---|---|
