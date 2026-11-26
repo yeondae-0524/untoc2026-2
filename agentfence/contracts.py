@@ -50,6 +50,8 @@ def validate_request(request):
     expected = {"path", "content"} if tool in {"write_file", "create_file"} else {"path"}
     if type(args) is not dict or set(args) != expected:
         raise FenceError("INVALID_ARGUMENTS", "Tool arguments do not match the contract.")
+    if not isinstance(args["path"], str):
+        raise FenceError("INVALID_ARGUMENTS", "path must be text.")
     path = validate_path(args["path"], listing=tool == "list_files")
     if "content" in args:
         if not isinstance(args["content"], str):

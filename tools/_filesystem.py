@@ -37,6 +37,13 @@ if os.name == "nt":
     _kernel.CloseHandle.restype = W.BOOL
     _kernel.GetFileInformationByHandle.argtypes = [W.HANDLE, C.POINTER(_Info)]
     _kernel.GetFileInformationByHandle.restype = W.BOOL
+    class _AttributeTag(C.Structure):
+        _fields_ = [("attributes", W.DWORD), ("tag", W.DWORD)]
+
+    _SYMLINK_TAG = 0xA000000C
+    _kernel.GetFileInformationByHandleEx.argtypes = [W.HANDLE, C.c_int, W.LPVOID, W.DWORD]
+    _kernel.GetFileInformationByHandleEx.restype = W.BOOL
+
     _kernel.GetFileType.argtypes = [W.HANDLE]
     _kernel.GetFileType.restype = W.DWORD
     _kernel.SetFileInformationByHandle.argtypes = [W.HANDLE, C.c_int, W.LPVOID, W.DWORD]
@@ -102,7 +109,7 @@ if os.name == "nt":
             info = _Info()
             if not _kernel.GetFileInformationByHandle(handle, C.byref(info)):
                 raise C.WinError(C.get_last_error())
-            if (_kernel.GetFileType(handle) != 1 or info.attributes & 0x400
+            if (_kernel.GetFileType(handle) != 1 or (info.attributes & 0x400 and directory is not None)
                     or (directory is not None and bool(info.attributes & 0x10) != directory)
                     or (not info.attributes & 0x10 and info.links != 1)):
                 _unsafe()
@@ -162,7 +169,7 @@ class _Directory:
                     os.unlink(name, dir_fd=self.descriptor)
 
     def kind(self, name):
-        # Listing does not open file data. Never reveal link/special/hardlink entries.
+        # Inspect metadata without following links or opening file data.
         if os.name == "nt":
             try:
                 handle, _ = _win_open(name, parent=self.descriptor, directory=None)
@@ -172,11 +179,18 @@ class _Directory:
                 info = _Info()
                 if not _kernel.GetFileInformationByHandle(handle, C.byref(info)):
                     raise C.WinError(C.get_last_error())
+                if info.attributes & 0x400:
+                    tag = _AttributeTag()
+                    if not _kernel.GetFileInformationByHandleEx(handle, 9, C.byref(tag), C.sizeof(tag)):
+                        raise C.WinError(C.get_last_error())
+                    return "symlink" if tag.tag == _SYMLINK_TAG else None
                 return "directory" if info.attributes & 0x10 else "file"
             finally:
                 _kernel.CloseHandle(handle)
         else:
             info = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+        if stat.S_ISLNK(info.st_mode):
+            return "symlink"
         if stat.S_ISDIR(info.st_mode):
             return "directory"
         if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:

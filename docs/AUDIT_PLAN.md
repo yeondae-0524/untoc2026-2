@@ -41,7 +41,7 @@ TIME [ERROR] TOOL run_id=RUN request_id=ID reason_code=CODE [path=PATH]
 강제 종료나 출력 실패 시 `END`가 빠질 수 있다.
 
 ```text
-TIME [START] run_id=RUN mode=stdin|gemini
+TIME [START] run_id=RUN mode=stdin|gemini|interactive
 TIME [END] run_id=RUN exit_code=N requests=N
 ```
 
@@ -69,7 +69,7 @@ TIME [END] run_id=RUN exit_code=N requests=N
 |---|---|---|
 | `ALLOW` | `decision=ALLOW`, `execution.status=SUCCESS` | 승인한 Tool 실행이 성공함. |
 | `BLOCK` | `decision=BLOCK`, `execution=null`, 아래 시스템 오류 코드가 아님 | 요청 형식·정책·안전성 검사 등으로 차단됨. |
-| `ERROR` | `decision=ALLOW`, `execution.status=ERROR` | 정책상 승인했으나 실제 실행에서 오류가 남. 쓰기·생성은 부분 변경 가능성이 있다. |
+| `ERROR` | `decision=ALLOW`, `execution.status=FAILED` | 정책상 승인했으나 실제 실행에서 오류가 남. 쓰기·생성은 부분 변경 가능성이 있다. |
 | `ERROR` | `decision=BLOCK`, `reason_code`가 `POLICY_ERROR`, `CONFIG_ERROR`, `UNSUPPORTED_PLATFORM`, `INTERNAL_ERROR` 중 하나 | 설정·플랫폼·내부 문제로 요청을 정상 처리하지 못함. 승인되거나 실행됐다는 뜻은 아니다. |
 
 로그는 요청마다 `RESULT` 하나를 기록한다. `ERROR`는 승인 후 실행 실패와 설정·내부 문제로 인한 차단을

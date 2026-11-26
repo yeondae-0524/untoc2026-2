@@ -64,11 +64,12 @@ class AuditDiffTests(unittest.TestCase):
             self.request(tool="delete_file", path="drafts/old.txt"),
             self.request(tool="read_file"), self.request(tool="list_files", path="."),
         ]
-        result = self.run_cli(requests, "--audit", "--audit-diff-dir", str(self.audit_dir))
+        result = self.run_cli(requests, "--json", "--audit", "--audit-diff-dir", str(self.audit_dir))
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual([reply["decision"] for reply in replies],
                          ["ALLOW", "ALLOW", "BLOCK", "ALLOW", "ALLOW", "ALLOW", "ALLOW"])
+        self.assertEqual(replies[0]["execution"]["result"]["bytes_written"], len("new private text"))
         audit = result.stderr
         self.assertNotIn("private text", audit)
         self.assertNotIn("patch_id", result.stdout)
@@ -122,6 +123,7 @@ class AuditDiffTests(unittest.TestCase):
               patch("tools.file_tools.os.write", side_effect=partial)):
             response = gateway(self.request("partially written"))
         self.assertEqual(response["reason_code"], "EXECUTION_ERROR")
+        self.assertEqual(response["execution"]["status"], "FAILED")
         self.assertEqual(self.target.read_bytes(), b"part")
         self.assertIn("[ERROR] write_file", logs.output[0])
         saved, = store.directory.glob("*.diff")
