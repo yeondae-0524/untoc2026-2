@@ -8,88 +8,40 @@ CLI에서 `--audit`를 지정하면 이 기록이 stderr에 표시된다.
 이 작업 내용은 기존의 개발 원칙과 상충될 가능성이 존재하므로 가능하면 기능 준비가 충분히 되기 전까지 이 브랜치를 원격으로 push하지 않고,
 여기서 작업한 내용도 main으로 merge하는 작업을 피한다.
 
-## 로그의 영속성
+## CLI 출력과 파일 보관
 
-현재 CLI는 `--audit`가 있을 때에만 stderr로 감사 기록을 출력하고, 파일은 만들지 않는다.
-향후에는 CLI 실행 시 workspace 밖의 보호된 위치에 자동으로 기록하고 `--audit`는 stderr 동시 출력 옵션으로
-둘 수 있다. Python API 사용자는 CLI의 자동 파일 설정을 거치지 않으므로 별도 설정이 필요하다.
+CLI 감사 로그는 `--audit`를 지정한 실행에서만 활성화되며 stderr로 출력한다. 일반 CLI의 Tool 응답 JSON은
+stdout에 출력한다. CLI는 감사 로그 파일을 만들거나 회전시키지 않는다. 파일 보관이 필요하면 실행자가
+workspace 밖의 저장 위치를 선택하고 셸 리다이렉션을 사용한다.
 
-### 저장 방식 비교
+```sh
+python main.py --audit < requests.jsonl 2>> /path/outside-workspace/recent.log
+```
 
-| 방식 | 장점 | 한계·비용 | 판단 |
-|---|---|---|---|
-| 실행별 파일 | 실행의 시작·종료와 요청이 한 파일에 모인다. 서로 다른 CLI 프로세스가 같은 파일을 쓰지 않는다. | 짧은 실행이 많으면 작은 파일이 쌓이고 검색·보존 기간 관리가 번거롭다. | 동시 실행을 허용하면서 별도 수집기를 두지 않을 때 적합하다. |
-| 공유 `recent.log`에 무제한 추가 | 구현과 `tail` 확인이 쉽다. 파일 수가 적다. | 오래 운영하면 크기가 끝없이 증가한다. 여러 프로세스의 직접 동시 기록은 안전하다고 가정할 수 없다. | 장기 기본값으로 부적합하다. |
-| 공유 `recent.log` + 크기 기준 회전 | 현재 파일 이름이 일정하고 전체 사용량을 제한할 수 있다. Python 표준 `RotatingFileHandler`가 있다. | 회전이 실행 중간에 일어날 수 있다. 여러 프로세스가 같은 파일·회전 파일을 직접 관리하면 충돌할 수 있다. | **단일 기록자를 보장할 수 있을 때 1순위.** |
-| 공유 파일 + 시간 기준 회전 | 날짜별 조회와 보존 기간 정책에 직관적이다. | 기록이 없으면 정해진 시각에 바로 회전하지 않는다. 크기 상한도 별도로 필요하다. | 저빈도·소규모 실행의 첫 단계에는 이점이 작다. |
-| stderr → OS/외부 수집기 | 여러 프로세스의 기록·보존·회전을 수집기 한 곳에 맡길 수 있다. | 실행 환경에 수집기 설정이 필요하고, 단독 CLI 실행만으로 로컬 파일이 생기지는 않는다. | 서비스/배포 환경에서 적합하다. |
-
-Gemini Agent는 한 실행에서 Tool Call이 최대 16개지만, 일반 stdin JSON Lines 모드는 EOF까지 요청을 계속
-받는다. 따라서 실행당 호출 수가 작다는 가정만으로 크기 제한을 생략하지 않는다. 압축된 회전 파일은
-저장량이 실제 문제가 될 때 검토한다. 초기부터 `.gz`/`.zip` 로테이터를 직접 구현할 이점은 작다.
-
-### 권장안: 단일 기록자일 때 공유 파일 + 크기 기준 회전
-
-- 활성 파일은 `recent.log`, 이전 파일은 `recent.log.1` 등으로 둔다. `maxBytes`와 `backupCount`를 모두
-  양수로 설정하고, 디스크 예산과 예상 기록량에 맞춰 값을 정한다. 회전 파일을 포함한 사용량을 제한한다.
-- CLI 시작 시 난수 기반 `run_id`를 만들고 `START run_id=... mode=stdin|gemini`를 기록한다. 요청별 기록에도
-  같은 `run_id`를 붙인다. 정상 종료 시 `END run_id=... exit_code=... requests=...`를 기록한다.
-  사용자가 제공하는 `request_id`는 중복될 수 있으므로 실행 식별자로 쓰지 않는다.
-- `START`와 `END` 사이의 줄이 항상 붙어 있다고 가정하지 않는다. 회전으로 여러 파일에 나뉠 수 있고,
-  동시 실행을 허용하면 서로 다른 실행의 줄이 섞일 수 있다. 분석할 때는 `run_id`로 묶는다.
-- `END`는 정상 종료 및 처리 가능한 예외에서만 남길 수 있다. 강제 종료, 전원 손실, 로그 쓰기 실패에는
-  빠질 수 있으므로 `END`가 없는 실행을 곧바로 비정상 종료로 확정하지 않는다.
-- 기본 경로는 workspace 밖에서 정하고, 사용자 지정 `--workspace`를 포함해 실제 설정에서도 로그 경로가
-  workspace 내부가 아닌지 검사한다. 로그 디렉터리/파일은 해당 사용자만 읽고 쓸 수 있게 만들고,
-  저장소에 커밋되지 않게 한다. 운영체제별 권한 설정 방법은 구현 시 확정한다.
-- 표준 `FileHandler`/`RotatingFileHandler`만으로는 여러 프로세스의 동일 파일 기록을 보장하지 못한다.
-  1차 구현에서 공유 파일을 선택한다면 단일 CLI 기록자라는 조건을 명시하고 실제로 보장해야 한다.
-  이 조건을 보장하기 어렵다면 실행별 파일이나 별도 로그 수집기로 전환한다.
-
-자동 파일 기록을 보안상 필수 감사로 취급할지도 별도 결정이 필요하다. 파일을 열지 못하면 첫 Tool 실행 전에
-중단할 수 있지만, 실행이 끝난 뒤 기록하는 현재 흐름에서는 **작업은 수행되고 해당 감사 줄만 실패**할 수 있다.
-기록 실패를 감지해 이후 요청을 막더라도 이미 발생한 작업은 되돌릴 수 없다. 모든 작업이 빠짐없이 기록되어야
-한다면 실행 전 기록, 디스크 동기화 및 실행 후 결과 기록을 포함한 별도 설계가 필요하다. 단순 파일 핸들러의
-오류 처리를 그 보장으로 간주하지 않는다.
-
-근거: [Python Logging Cookbook: 다중 프로세스 파일 기록](https://docs.python.org/3.11/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes),
-[Python logging.handlers: 크기·시간 기준 회전](https://docs.python.org/3.11/library/logging.handlers.html#rotatingfilehandler).
-
-## 로그의 출력형식
-
-현재 감사 로그는 UTC 시각과 `[ACCEPTED]`·`[REJECTED]`·`[ERROR]`, Tool 이름, 요청 ID,
-필요한 경우 사유 코드로 이루어진 텍스트 형식이다.
-stdout의 JSON 객체는 감사 로그가 아니라 게이트웨이 응답이다.
-로그를 분석하기 좋은 형태로 만드려면 텍스트 형식은 grep, JSON 형식은 jq 등으로 빠르게 원하는 데이터를 찾고 분석할 수 있게 만들어야 한다.
-
-예를 들어 특정한 시간대에 특정 디렉토리를 건드리다가 거절된 tool call들을 확인한다던가 하는 등의 질의가 가능할 필요가 있다.
+`2>>`는 stderr 전체를 파일에 추가하므로 일반 오류 메시지도 함께 저장될 수 있다. `recent.log`는 예시 이름이다.
+파일 권한과 보존량, 여러 실행의 기록을 한 파일에 모을지는 실행 환경에서 관리한다.
 
 ## 로그에 포함할 내용
 
 로그에는 분석에 필요한 정보만 남기고, 파일 내용·프롬프트·API 키·원본 예외 문자열은 남기지 않는다.
-경로 기록은 현재 `SECURITY.md`의 경로 제외 원칙을 변경한다.
-따라서 경로가 필요한 상세 감사 모드를 도입한다면 기록 대상, 접근 권한, 보존 기간을 함께 정하고 보안 문서도 수정해야 한다.
+기본 감사 로그는 경로를 생략한다. diff 모드를 함께 사용하면 파일 변경 요청의 검증된 상대 경로를 포함한다.
 
-### 형식 1안
-
-1차 구현은 `agentfence/audit.py`에서 결과를 분류하고 한 줄을 만들어 `--audit`의 stderr에 출력한다.
-파일 저장과 경로를 포함하는 상세 감사 모드는 이후 구현 대상으로 둔다.
+### Tool 요청과 실행 경계 형식
 
 한 요청이 끝난 뒤 한 줄을 기록한다. 결과에 따라 필요한 필드만 붙인다.
 
 ```text
-TIME [ACCEPTED] TOOL request_id=ID [path=PATH]
-TIME [REJECTED] TOOL request_id=ID reason_code=CODE [path=PATH]
-TIME [ERROR] TOOL request_id=ID reason_code=CODE [path=PATH]
+TIME [ALLOW] TOOL run_id=RUN request_id=ID [path=PATH]
+TIME [BLOCK] TOOL run_id=RUN request_id=ID reason_code=CODE [path=PATH]
+TIME [ERROR] TOOL run_id=RUN request_id=ID reason_code=CODE [path=PATH]
 ```
 
-위 형식은 현재 stderr 구현을 기준으로 한다. 영속 파일을 도입하면 모든 요청 줄의 `request_id` 앞에
-`run_id=RUN`을 추가하고, 같은 파일에 다음 실행 경계 줄을 기록한다. `START`·`END`는 Tool 요청이
-아니므로 Tool 이름과 `request_id`가 없다.
+실행마다 난수 기반 `run_id`를 만들고 요청 줄과 실행 경계 줄에 같은 값을 기록한다. `START`와 `END`는
+실행 경계 이벤트이며 Tool 이름과 `request_id`가 없다. 여러 실행의 줄이 섞여도 `run_id`로 묶을 수 있다.
+강제 종료나 출력 실패 시 `END`가 빠질 수 있다.
 
 ```text
 TIME [START] run_id=RUN mode=stdin|gemini
-TIME [ACCEPTED] TOOL run_id=RUN request_id=ID
 TIME [END] run_id=RUN exit_code=N requests=N
 ```
 
@@ -98,9 +50,10 @@ TIME [END] run_id=RUN exit_code=N requests=N
 | `TIME` | 기록 시각. UTC ISO 8601, 밀리초까지 표시하고 `Z`로 끝낸다. |
 | `RESULT` | 아래 표에 따라 게이트웨이 응답의 `decision`, `execution.status`, `reason_code`에서 결정한다. |
 | `TOOL` | 등록된 Tool 이름이면 그대로 기록한다. 알 수 없거나 추출할 수 없으면 `<unknown>`을 쓴다. 원본의 임의 Tool 문자열은 기록하지 않는다. |
+| `run_id` | 실행마다 생성하는 고유 식별자. 같은 실행의 요청과 실행 경계에 동일한 값을 쓴다. |
 | `request_id` | 계약에 맞는 ID만 기록한다. 없거나 잘못되었으면 `<unknown>`을 쓴다. 클라이언트가 정하는 값이므로 고유하거나 신뢰할 만한 실행 식별자로 취급하지 않는다. |
-| `reason_code` | `REJECTED`와 `ERROR`에서 필수다. 응답의 `reason_code`를 그대로 기록하며, 사람이 읽는 `reason`과 예외 원문은 기록하지 않는다. `ACCEPTED`의 `OK`는 결과와 의미가 같으므로 생략한다. |
-| `path` | 상세 감사 모드에서만 기록한다. 계약의 경로 검사를 통과한 workspace 상대 경로만 허용하며, 검사 전 원문은 기록하지 않는다. 경로를 확보하지 못했다면 필드 자체를 생략한다. `.`은 루트 목록 요청에만 사용한다. |
+| `reason_code` | `BLOCK`과 `ERROR`에서 필수다. 응답의 `reason_code`를 그대로 기록하며, 사람이 읽는 `reason`과 예외 원문은 기록하지 않는다. `ALLOW`의 `OK`는 결과와 의미가 같으므로 생략한다. |
+| `path` | diff 모드에서 파일 변경 요청의 검증된 workspace 상대 경로를 기록한다. |
 
 1차 구현에서는 미등록 Tool 이름을 `<unknown>`으로 기록한다. 임의 문자열의 개행으로 로그 줄을 위조하거나,
 과도하게 긴 값·프롬프트·비밀정보를 로그에 남기지 않기 위한 선택이다. 대신 어떤 이름으로 호출했는지
@@ -114,42 +67,73 @@ TIME [END] run_id=RUN exit_code=N requests=N
 
 | `RESULT` | 게이트웨이 응답 | 의미 |
 |---|---|---|
-| `ACCEPTED` | `decision=ALLOW`, `execution.status=SUCCESS` | 승인한 Tool 실행이 성공함. |
-| `REJECTED` | `decision=BLOCK`, `execution=null`, 아래 시스템 오류 코드가 아님 | 요청 형식·정책·안전성 검사 등으로 차단됨. Tool이 실행되지 않았다는 뜻으로 일반화하지 않는다. |
+| `ALLOW` | `decision=ALLOW`, `execution.status=SUCCESS` | 승인한 Tool 실행이 성공함. |
+| `BLOCK` | `decision=BLOCK`, `execution=null`, 아래 시스템 오류 코드가 아님 | 요청 형식·정책·안전성 검사 등으로 차단됨. |
 | `ERROR` | `decision=ALLOW`, `execution.status=ERROR` | 정책상 승인했으나 실제 실행에서 오류가 남. 쓰기·생성은 부분 변경 가능성이 있다. |
 | `ERROR` | `decision=BLOCK`, `reason_code`가 `POLICY_ERROR`, `CONFIG_ERROR`, `UNSUPPORTED_PLATFORM`, `INTERNAL_ERROR` 중 하나 | 설정·플랫폼·내부 문제로 요청을 정상 처리하지 못함. 승인되거나 실행됐다는 뜻은 아니다. |
 
-`ACCEPTED`와 `REJECTED`만 보면 각각 `ALLOW`와 `BLOCK`을 알 수 있어 `decision`을 다시 쓰지 않는다.
-`ERROR`는 승인 후 실행 실패(`ALLOW`)와 설정·내부 문제로 인한 차단(`BLOCK`)을 함께 가리킬 수 있다.
-둘은 한 요청에서 동시에 반환되는 두 결과가 아니라, 오류가 발생한 단계가 다른 경우다. 현재의
-`reason_code`로 두 종류를 구별한다. 위 표의 시스템 오류 코드는 처리 실패를, `NOT_FOUND`,
-`ALREADY_EXISTS`, `EXECUTION_ERROR` 등은 승인 후 실행 실패를 나타낸다.
-예상하지 못한 응답 조합은
-`ERROR`로 기록하고 별도 검증 실패로 취급한다. 로그 분류 오류가 실행 결과를 바꿔서는 안 된다.
+로그는 요청마다 `RESULT` 하나를 기록한다. `ERROR`는 승인 후 실행 실패와 설정·내부 문제로 인한 차단을
+포함하며, 둘은 `reason_code`로 구별한다. 예상하지 못한 응답 조합은 `ERROR`로 분류한다.
 
 ```text
-2026-11-09T12:01:13.824Z [ACCEPTED] write_file request_id=req-1 path=notes.txt
-2026-11-09T12:01:14.010Z [REJECTED] read_file request_id=req-2 reason_code=NOT_ALLOWED path=private.txt
-2026-11-09T12:01:14.051Z [REJECTED] <unknown> request_id=<unknown> reason_code=INVALID_REQUEST
-2026-11-09T12:01:14.090Z [ERROR] create_file request_id=req-3 reason_code=ALREADY_EXISTS path=drafts/new.txt
-2026-11-09T12:01:14.110Z [ERROR] read_file request_id=req-4 reason_code=POLICY_ERROR path=public.txt
+2026-11-09T12:01:13.824Z [ALLOW] write_file run_id=run-1 request_id=req-1 path=notes.txt
+2026-11-09T12:01:14.010Z [BLOCK] read_file run_id=run-1 request_id=req-2 reason_code=NOT_ALLOWED
+2026-11-09T12:01:14.051Z [BLOCK] <unknown> run_id=run-1 request_id=<unknown> reason_code=INVALID_REQUEST
+2026-11-09T12:01:14.090Z [ERROR] create_file run_id=run-1 request_id=req-3 reason_code=ALREADY_EXISTS path=drafts/new.txt
+2026-11-09T12:01:14.110Z [ERROR] read_file run_id=run-2 request_id=req-4 reason_code=POLICY_ERROR
 ```
 
-위 예시의 `path`는 상세 감사 모드를 가정한다. 기본 stderr 모드에서는 다섯 줄 모두 `path`를 생략한다.
-`REJECTED`라도 경로가 계약 검사를 통과했다면 상세 모드에서 기록할 수 있다. `INVALID_PATH`나
-`PROTECTED_PATH`처럼 검사를 통과하지 못한 경로의 원문은 기록하지 않는다.
+위 예시의 `path`는 상세 감사 모드를 가정한다. `--audit`만 지정하면 `path`를 생략한다.
+파일 변경 요청은 `BLOCK`이어도 경로가 계약 검사를 통과했다면 diff 모드의 감사 줄에 경로를 기록한다.
+`INVALID_PATH`나 `PROTECTED_PATH` 같은 검증 오류에는 `path`를 생략한다.
 
 현재 게이트웨이는 실행 중 `FenceError`가 발생하면 `BLOCK` 응답을 반환한다. 예를 들어 안전하지 않은 대상이나
 읽기 크기 제한에 걸린 경우가 여기에 포함될 수 있다. 위 표는 **현행 응답의 분류**를 따르므로 이들은
-`REJECTED`로 표시한다. 실제 실행이 시작됐는지를 로그만으로 단정하려면 게이트웨이의 오류 상태 모델을 먼저
+`BLOCK`으로 표시한다. 실제 실행이 시작됐는지를 로그만으로 단정하려면 게이트웨이의 오류 상태 모델을 먼저
 세분화해야 한다. `ERROR`를 모든 실행 단계 오류의 이름으로 쓰고 싶다면 구현 전에 응답 계약도 함께 개정한다.
 
-#### 다음 구현 전에 결정할 점
+## 파일 변경 diff 보관
 
-- 단일 기록자 조건을 보장할 방법. 보장할 수 없다면 공유 파일을 쓰지 않는다.
-- 로그 파일 경로, 접근 권한, 회전 크기·보관 파일 수의 기본값.
-- 상세 감사 모드의 활성화 방법과 경로 기록 허용 범위.
-- 감사 기록 실패 시 요청 처리를 계속할지, 실행 전에 중단할지. 보안상 필수 기록이라면 실행 후 기록 실패를
-  어떻게 다룰지도 설계해야 한다.
+`--audit-diff-dir DIR`을 지정하면 workspace 전체에서 `write_file`, `create_file`, `delete_file`이 수행한
+변경을 파일별로 보관한다. `DIR`은 기존의 보호된 디렉터리여야 한다. `--audit`를 함께 지정하면 stderr 감사 줄에
+변경 요약과 diff 식별자를 추가한다. `read_file`과 `list_files`에는 diff를 만들지 않는다.
 
-### 형식 2안
+### 파일 형식과 연결
+
+diff 하나는 호출 하나의 변경을 담는다. workspace와 저장소 밖의 보호된 감사 디렉터리에
+`patches/<patch_id>.diff`로 저장한다. `patch_id`는 시스템이 생성한 고유 값이다.
+상세 모드의 감사 줄에는 `run_id`, `request_id`와 함께 저장이 끝난 diff의 `patch_id`를 기록한다.
+
+```text
+2026-11-09T12:01:13.824Z [ALLOW] write_file run_id=run-1 request_id=req-1 path=notes.txt change=modified patch_id=9d576cabe90a40de9741422f7586bec9
+```
+
+파일은 UTF-8로 읽을 수 있는 Git 스타일 unified diff로 기록한다. 헤더는 `a/`와 `b/` 뒤에 검증된
+workspace 상대 경로를 사용하고 변경 구간에는 앞뒤 문맥을 최대 한 줄씩 붙인다. 생성·삭제 diff는
+존재하지 않는 쪽을 `/dev/null`로 표시하며 파일 전체 내용이 들어갈 수 있다. 용도는 변경 검토다.
+
+```diff
+diff --git a/notes.txt b/notes.txt
+--- a/notes.txt
++++ b/notes.txt
+@@ -1,2 +1,2 @@
+ 회의 메모
+-일정: 월요일
++일정: 화요일
+```
+
+### 생성 조건과 보관 한도
+
+- 파일 Tool이 실제로 연 대상의 변경 전후 상태를 비교한다. 쓰기 요청의 `content`는 실제 결과와 다를 수 있다.
+  수정 전후의 바이트가 같으면 `change=unchanged`로 기록한다. 외부 프로세스가 같은 파일을 동시에 수정하는
+  환경에서는 관측한 전후 차이를 해당 Tool의 변경으로 확정할 수 없다.
+- 쓰기 도중 `ERROR`가 나도 관측 가능한 변경은 위와 같은 규칙으로 기록한다. 변경 여부를 확인하지
+  못하면 `change=unknown`으로 표시한다. 파일 변경 결과와 diff 저장 결과는 별도로 기록한다.
+- 전후 입력은 각각 64 KiB와 2,048줄, diff 한 건은 32 KiB로 제한한다. 한도를 넘으면
+  `diff=omitted_size`, UTF-8 텍스트로 다룰 수 없으면 `diff=omitted_format`, 전후 내용을 읽지 못하면
+  `diff=capture_failed`를 남긴다. 새 diff를 저장할 때 7일이 지난 파일과 전체 20 MiB 한도를 넘게 하는
+  오래된 파일을 지운다. 정리 후에는 로그의 `patch_id`만 남을 수 있다.
+- 같은 디렉터리의 임시 파일에 기록을 마친 뒤 최종 이름으로 옮긴다. 저장에 실패하면 `diff=save_failed`를
+  남기고 `patch_id`는 기록하지 않는다. diff는 선택적 검토 자료이므로 저장 실패가 Tool 결과를 바꾸지 않는다.
+- 삭제된 줄과 문맥에도 민감한 내용이 남을 수 있다. diff 디렉터리는 운영 계정으로 접근을 제한하고,
+  diff 본문을 stderr나 Tool 응답에 포함하지 않는다.

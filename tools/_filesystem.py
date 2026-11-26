@@ -2,7 +2,7 @@
 import errno
 import os
 import stat
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager, ExitStack, nullcontext
 from pathlib import Path
 
 from agentfence.contracts import FenceError
@@ -144,20 +144,22 @@ class _Directory:
         finally:
             os.close(descriptor)
 
-    def delete(self, name):
+    def delete(self, name, *, change=None):
         with self.file(name, "d") as descriptor:
-            if os.name == "nt":
-                # Delete the validated handle, not a re-resolved path.
-                disposition = W.BOOL(True)
-                if not _kernel.SetFileInformationByHandle(msvcrt.get_osfhandle(descriptor), 4,
-                                                         C.byref(disposition), C.sizeof(disposition)):
-                    raise C.WinError(C.get_last_error())
-            else:
-                # unlink never follows a swapped leaf symlink. Parent remains pinned.
-                info = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
-                if (info.st_dev, info.st_ino) != (os.fstat(descriptor).st_dev, os.fstat(descriptor).st_ino):
-                    _unsafe()
-                os.unlink(name, dir_fd=self.descriptor)
+            observation = change.observe_delete(descriptor) if change is not None else nullcontext()
+            with observation:
+                if os.name == "nt":
+                    # Delete the validated handle, not a re-resolved path.
+                    disposition = W.BOOL(True)
+                    if not _kernel.SetFileInformationByHandle(msvcrt.get_osfhandle(descriptor), 4,
+                                                             C.byref(disposition), C.sizeof(disposition)):
+                        raise C.WinError(C.get_last_error())
+                else:
+                    # unlink never follows a swapped leaf symlink. Parent remains pinned.
+                    info = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+                    if (info.st_dev, info.st_ino) != (os.fstat(descriptor).st_dev, os.fstat(descriptor).st_ino):
+                        _unsafe()
+                    os.unlink(name, dir_fd=self.descriptor)
 
     def kind(self, name):
         # Listing does not open file data. Never reveal link/special/hardlink entries.

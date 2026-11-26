@@ -4,17 +4,19 @@ The factory is private integration code owned by B team's gateway. There is no
 public execute(tool, raw_path) API and no caller-supplied approved=True switch.
 """
 import os
+from contextlib import nullcontext
 
 from agentfence.contracts import FenceError, MAX_BYTES
 from tools._filesystem import Workspace
 
 
 class _ApprovedCall:
-    __slots__ = ("_issuer", "tool", "arguments", "workspace", "policy", "_used")
+    __slots__ = ("_issuer", "tool", "arguments", "workspace", "policy", "_used", "change")
 
-    def __init__(self, issuer, tool, arguments, workspace, policy):
+    def __init__(self, issuer, tool, arguments, workspace, policy, *, change=None):
         self._issuer, self.tool, self.arguments = issuer, tool, arguments
         self.workspace, self.policy, self._used = workspace, policy, False
+        self.change = change
 
 
 _ISSUER = object()
@@ -51,15 +53,17 @@ def _write(call, args, mode):
     parent, name = _parent(args["path"])
     data = args["content"].encode("utf-8")
     with call.workspace.directory(parent) as directory, directory.file(name, mode) as fd:
-        # Never O_TRUNC before the opened object's type/link checks.
-        os.ftruncate(fd, 0)
-        offset = 0
-        while offset < len(data):
-            written = os.write(fd, data[offset:])
-            if written <= 0:
-                raise OSError("Short write")
-            offset += written
-        os.fsync(fd)
+        observation = call.change.observe_write(fd, creating=mode == "x") if call.change is not None else nullcontext()
+        with observation:
+            # Never O_TRUNC before the opened object's type/link checks.
+            os.ftruncate(fd, 0)
+            offset = 0
+            while offset < len(data):
+                written = os.write(fd, data[offset:])
+                if written <= 0:
+                    raise OSError("Short write")
+                offset += written
+            os.fsync(fd)
     return {"path": args["path"], "bytes": len(data)}
 
 
@@ -90,7 +94,7 @@ def delete_file(call):
     args = _consume(call, "delete_file")
     parent, name = _parent(args["path"])
     with call.workspace.directory(parent) as directory:
-        directory.delete(name)
+        directory.delete(name, change=call.change)
     return {"path": args["path"], "deleted": True}
 
 
@@ -98,11 +102,11 @@ def _make_dispatch(workspace, policy):
     backend = Workspace(workspace)
     functions = {fn.__name__: fn for fn in (read_file, write_file, list_files, create_file, delete_file)}
 
-    def dispatch(tool, arguments):
+    def dispatch(tool, arguments, *, change=None):
         # Defense in depth at the integration boundary, before minting an approval.
         if not policy.allows(tool, arguments["path"]):
             raise FenceError("NOT_ALLOWED", "No matching allowlist grant.")
-        call = _ApprovedCall(_ISSUER, tool, dict(arguments), backend, policy)
+        call = _ApprovedCall(_ISSUER, tool, dict(arguments), backend, policy, change=change)
         return functions[tool](call)
 
     return dispatch

@@ -7,7 +7,8 @@ from agentfence.contracts import FenceError, VERSION, _ID, validate_request
 from agentfence.policy import Policy
 from tools.file_tools import _make_dispatch
 
-def build_gateway(*, workspace, policy_path):
+
+def build_gateway(*, workspace, policy_path, audit=None):
     """Return handle(request: dict) -> response: dict. Configuration is trusted."""
     startup_error = None
     policy = None
@@ -33,6 +34,7 @@ def build_gateway(*, workspace, policy_path):
             if isinstance(candidate, str) and _ID.fullmatch(candidate):
                 request_id = candidate
         decision, code, reason, execution = "BLOCK", "INTERNAL_ERROR", "Request could not be processed.", None
+        tool, arguments, change = None, None, None
         with lock:
             try:
                 tool, arguments = validate_request(request)
@@ -43,7 +45,10 @@ def build_gateway(*, workspace, policy_path):
                 if not policy.allows(tool, arguments["path"]):
                     raise FenceError("NOT_ALLOWED", "No matching allowlist grant.")
                 # The closure owns the executor. Agent never receives it or an ALLOW token.
-                result = dispatch(tool, arguments)
+                if audit is not None:
+                    change = audit.capture_change(tool, arguments["path"])
+                result = (dispatch(tool, arguments, change=change) if change is not None
+                          else dispatch(tool, arguments))
                 decision, code, reason = "ALLOW", "OK", "Approved and executed."
                 execution = {"status": "SUCCESS", "result": result}
             except FenceError as exc:
@@ -61,7 +66,11 @@ def build_gateway(*, workspace, policy_path):
                 decision, code, reason, execution = "BLOCK", "INTERNAL_ERROR", "Request could not be processed.", None
             response = {"version": VERSION, "request_id": request_id, "decision": decision,
                         "reason_code": code, "reason": reason, "execution": execution}
-            record(request, response)
+            if audit is None:
+                record(request, response)
+            else:
+                path = arguments["path"] if arguments is not None else None
+                audit.record(request, response, tool=tool, path=path, change=change)
             return response
 
     return handle
