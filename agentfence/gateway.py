@@ -1,19 +1,18 @@
 """The only callable injected into the Agent. Approval never leaves this module."""
-import logging
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
+from agentfence.audit import record
 from agentfence.contracts import FenceError, VERSION, _ID, validate_request
 from agentfence.policy import Policy
 from tools.file_tools import _make_dispatch
 
-_LOG = logging.getLogger("agentfence.audit")
 
-
-def build_gateway(*, workspace, policy_path):
+def build_gateway(*, workspace, policy_path, audit=None):
     """Return handle(request: dict) -> response: dict. Configuration is trusted."""
     startup_error = None
+    policy = dispatch = None
     try:
         workspace = Path(workspace).absolute()
         policy_path = Path(policy_path).absolute()
@@ -32,42 +31,43 @@ def build_gateway(*, workspace, policy_path):
         startup_error = FenceError("INTERNAL_ERROR", "Gateway could not be initialized.")
     lock = Lock()
 
-    def process(request, request_id):
-        try:
-            tool, arguments = validate_request(request)
-        except FenceError as exc:
-            return _response(request_id, "BLOCK", exc.code, exc.message)
-        except Exception:
-            return _response(request_id, "BLOCK", "INTERNAL_ERROR", "Request could not be processed.")
-
-        if startup_error:
-            return _response(request_id, "BLOCK", startup_error.code, startup_error.message)
+    def process(tool, arguments, request_id):
+        if startup_error is not None:
+            return _response(request_id, "BLOCK", startup_error.code, startup_error.message), None
+        if policy is None or dispatch is None:
+            return _response(request_id, "BLOCK", "CONFIG_ERROR", "Workspace configuration is unavailable."), None
         try:
             allowed = policy.allows(tool, arguments["path"])
         except Exception:
             # No executor has been called. A policy failure must remain a BLOCK.
-            return _response(request_id, "BLOCK", "POLICY_ERROR", "Policy check failed; request blocked.")
+            return _response(request_id, "BLOCK", "POLICY_ERROR", "Policy check failed; request blocked."), None
         if not allowed:
-            return _response(request_id, "BLOCK", "NOT_ALLOWED", "No matching allowlist grant.")
+            return _response(request_id, "BLOCK", "NOT_ALLOWED", "No matching allowlist grant."), None
 
+        change = audit.capture_change(tool, arguments["path"]) if audit is not None else None
         try:
             # The closure owns the executor. Agent never receives it or an ALLOW token.
-            result = dispatch(tool, arguments)
+            if change is None:
+                result = dispatch(tool, arguments)
+            else:
+                result = dispatch(tool, arguments, change=change)
         except FenceError as exc:
             # Expected safety rejections from the trusted file Tool boundary.
-            return _response(request_id, "BLOCK", exc.code, exc.message)
+            response = _response(request_id, "BLOCK", exc.code, exc.message)
         except (OSError, UnicodeError) as exc:
             code, reason = "EXECUTION_ERROR", "Approved operation failed."
             if isinstance(exc, FileNotFoundError):
                 code, reason = "FILE_NOT_FOUND", "Approved target does not exist."
             elif isinstance(exc, FileExistsError):
                 code, reason = "ALREADY_EXISTS", "create_file cannot overwrite a target."
-            return _failed(request_id, code, reason)
+            response = _failed(request_id, code, reason)
         except Exception:
             # Execution may already have changed a file; never claim it was not run.
-            return _failed(request_id, "INTERNAL_ERROR", "Approved operation failed.")
-        return _response(request_id, "ALLOW", "OK", "Approved and executed.",
-                         {"status": "SUCCESS", "result": result})
+            response = _failed(request_id, "INTERNAL_ERROR", "Approved operation failed.")
+        else:
+            response = _response(request_id, "ALLOW", "OK", "Approved and executed.",
+                                 {"status": "SUCCESS", "result": result})
+        return response, change
 
     def handle(request):
         request_id = None
@@ -76,11 +76,21 @@ def build_gateway(*, workspace, policy_path):
             if isinstance(candidate, str) and _ID.fullmatch(candidate):
                 request_id = candidate
         with lock:
-            response = process(request, request_id)
-            # No paths, content, prompts, keys, or raw exception strings in audit logs.
+            tool = path = change = None
             try:
-                _LOG.info("request_id=%s decision=%s reason_code=%s", request_id,
-                          response["decision"], response["reason_code"])
+                tool, arguments = validate_request(request)
+            except FenceError as exc:
+                response = _response(request_id, "BLOCK", exc.code, exc.message)
+            except Exception:
+                response = _response(request_id, "BLOCK", "INTERNAL_ERROR", "Request could not be processed.")
+            else:
+                path = arguments["path"]
+                response, change = process(tool, arguments, request_id)
+            try:
+                if audit is None:
+                    record(request, response)
+                else:
+                    audit.record(request, response, tool=tool, path=path, change=change)
             except Exception:
                 # Best-effort logging must not hide a completed operation and invite a retry.
                 pass

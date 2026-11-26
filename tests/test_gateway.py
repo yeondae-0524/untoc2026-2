@@ -94,8 +94,9 @@ class GatewayTests(unittest.TestCase):
     def test_logging_failure_preserves_result_and_does_not_repeat_execution(self):
         dispatch = Mock(return_value={"path": "notes.txt", "bytes": 5})
         handle = self.build(dispatch)
-        with patch("agentfence.gateway._LOG.info", side_effect=OSError("PRIVATE_DETAILS")):
+        with patch("agentfence.gateway.record", side_effect=OSError("PRIVATE_DETAILS")) as recorder:
             response = handle(self.request)
+        recorder.assert_called_once()
         self.assertEqual(response["decision"], "ALLOW")
         self.assertEqual(response["execution"], {"status": "SUCCESS", "result": {"path": "notes.txt", "bytes": 5}})
         dispatch.assert_called_once_with("write_file", self.request["arguments"])
@@ -103,8 +104,9 @@ class GatewayTests(unittest.TestCase):
     def test_logging_failure_preserves_block_and_never_executes(self):
         dispatch = Mock()
         handle = self.build(dispatch)
-        with patch("agentfence.gateway._LOG.info", side_effect=RuntimeError("PRIVATE_DETAILS")):
+        with patch("agentfence.gateway.record", side_effect=RuntimeError("PRIVATE_DETAILS")) as recorder:
             response = handle({**self.request, "arguments": {"path": "unlisted.txt", "content": "after"}})
+        recorder.assert_called_once()
         self.assert_blocked_without_execution(response, dispatch, "NOT_ALLOWED")
 
 

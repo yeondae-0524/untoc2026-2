@@ -35,7 +35,20 @@ python -m pytest -q
 ```
 
 차단 확인: 위 요청의 경로를 `../config/policy.json`으로 바꿉니다. `BLOCK`, `INVALID_PATH`, `execution: null`이 반환됩니다.
-`--audit` 옵션은 요청 ID·판정·사유 코드만 표준 오류에 기록합니다.
+`--audit`는 UTC 시각, 실행 ID, Tool, 요청 ID와 `ALLOW`·`BLOCK`·`ERROR` 결과를 stderr에 기록합니다.
+차단과 오류에는 사유 코드가 붙습니다. 로그를 파일에 저장하려면 `2>>`로 stderr를 리다이렉트합니다.
+
+`--audit-diff-dir`에 workspace와 저장소 밖의 보호된 디렉터리를 지정하면 workspace 전체에서
+Tool이 수행한 파일 생성·수정·삭제의 diff를 보관합니다.
+
+```sh
+audit_dir=$(mktemp -d)
+python main.py --audit --audit-diff-dir "$audit_dir" \
+  < requests.jsonl 2>> "$audit_dir/recent.log"
+```
+
+`--audit`를 함께 사용하면 감사 줄의 `patch_id`로 `patches/<patch_id>.diff`를 찾을 수 있습니다.
+`--audit-diff-dir`만 지정하면 diff 파일만 보관합니다. 생성·삭제 diff에는 해당 파일 전체 내용이 들어갈 수 있습니다.
 
 ## Gemini 연결
 
